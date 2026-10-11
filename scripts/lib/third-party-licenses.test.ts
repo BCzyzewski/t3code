@@ -1,13 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off - Tests exercise the Node filesystem build boundary.
 
 import * as NodeFSP from "node:fs/promises";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-import { DEVICE_TOOL_VERSIONS } from "@t3tools/shared/deviceToolVersions";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
+import { DEVICE_TOOL_VERSIONS } from "../../packages/shared/src/deviceToolVersions.ts";
 import {
   generateThirdPartyLicenseManifest,
   THIRD_PARTY_LICENSES_FILE_NAME,
@@ -78,6 +79,75 @@ afterEach(async () => {
 });
 
 describe("third-party license generation", () => {
+  it("generates mobile notices without scripts workspace dependency links", async () => {
+    const fixture = await createFixture();
+    const generatorPath = NodePath.join(fixture.root, "scripts/lib/third-party-licenses.ts");
+    const versionsPath = NodePath.join(fixture.root, "packages/shared/src/deviceToolVersions.ts");
+    await Promise.all([
+      NodeFSP.mkdir(NodePath.dirname(generatorPath), { recursive: true }),
+      NodeFSP.mkdir(NodePath.dirname(versionsPath), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeJson(NodePath.join(fixture.root, "scripts/package.json"), { type: "module" }),
+      writeJson(NodePath.join(fixture.root, "packages/shared/package.json"), { type: "module" }),
+      NodeFSP.copyFile(
+        NodePath.join(REPOSITORY_ROOT, "scripts/lib/third-party-licenses.ts"),
+        generatorPath,
+      ),
+      NodeFSP.copyFile(
+        NodePath.join(REPOSITORY_ROOT, "packages/shared/src/deviceToolVersions.ts"),
+        versionsPath,
+      ),
+      writeJson(fixture.configFile, {
+        customNotices: Object.keys(DEVICE_TOOL_VERSIONS).map((name) => ({
+          name,
+          license: "MIT",
+          noticeFile: "asset-notice.txt",
+          bundles: ["device-tools"],
+          includeInBundles: ["mobile", "web"],
+        })),
+      }),
+    ]);
+
+    const output = NodeChildProcess.execFileSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `
+          import { pathToFileURL } from "node:url";
+          const { generateThirdPartyLicenseManifest } = await import(
+            pathToFileURL(process.argv[1]).href + "?version=1"
+          );
+          const manifest = await generateThirdPartyLicenseManifest({
+            configFile: process.argv[2],
+            packageManifests: [{ bundle: "mobile", path: process.argv[3] }],
+          });
+          process.stdout.write(JSON.stringify(manifest));
+        `,
+        generatorPath,
+        fixture.configFile,
+        fixture.appManifest,
+      ],
+      { cwd: fixture.root, encoding: "utf8" },
+    );
+    const manifest = JSON.parse(output) as {
+      entries: ReadonlyArray<{ name: string; version: string }>;
+    };
+    expect(manifest.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "agent-device",
+          version: DEVICE_TOOL_VERSIONS["agent-device"],
+        }),
+        expect.objectContaining({
+          name: "expo-device-hub",
+          version: DEVICE_TOOL_VERSIONS["expo-device-hub"],
+        }),
+      ]),
+    );
+  });
+
   it.each(["web", "mobile"])(
     "uses installer pins for device tool notices in the %s manifest",
     async (bundle) => {

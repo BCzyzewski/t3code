@@ -5,8 +5,9 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeModule from "node:module";
 
-import { DEVICE_TOOL_VERSIONS } from "@t3tools/shared/deviceToolVersions";
 import type { Plugin } from "vite-plus";
+
+import { DEVICE_TOOL_VERSIONS } from "../../packages/shared/src/deviceToolVersions.ts";
 
 export const THIRD_PARTY_LICENSES_FILE_NAME = "third-party-licenses.json";
 const SPDX_LICENSE_LIST_VERSION = "v3.28.0";
